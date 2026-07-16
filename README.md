@@ -56,6 +56,23 @@ baked in.)
 All behavior lives in [`.github/triage-policy.md`](.github/triage-policy.md) — the single
 source of truth both agents read at runtime. Change policy via PR; no code change needed.
 
+## Bot identity — one branded bot instead of github-actions[bot] (optional)
+
+By default the review posts as **github-actions[bot]**. To have it (and the companion issue
+agent) act as a single branded **GitHub App** identity like `stellar-docs-bot[bot]`, run the
+included one-command setup — two browser clicks total (Create, then Install):
+
+```bash
+./setup-github-app.sh   # see SETUP.md
+```
+
+It registers the app via GitHub's manifest flow, captures the App ID + private key
+automatically (nothing to copy/paste), and sets them as the `APP_ID` / `APP_PRIVATE_KEY`
+repo secrets. Each job then mints a short-lived installation token with
+`actions/create-github-app-token@v3`, scoped down per job — the `review` job's token still
+cannot merge, preserving the safety boundary. If the secrets are absent the workflow falls
+back to `GITHUB_TOKEN` and behaves exactly as before.
+
 ## Install
 
 1. Copy `.github/workflows/*.yml` and `.github/triage-policy.md` into your repo.
@@ -63,7 +80,9 @@ source of truth both agents read at runtime. Change policy via PR; no code chang
    `triage:close-candidate`, `triage:needs-info`.
 3. Add auth as a repo secret — either `CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`) or
    swap the workflows to an org `ANTHROPIC_API_KEY`.
-4. Open a PR and watch it review within a couple of minutes.
+4. Optional: `REPO=owner/name ./setup-github-app.sh` for the branded bot identity (see
+   [SETUP.md](SETUP.md)); skip it and the bot posts as `github-actions[bot]`.
+5. Open a PR and watch it review within a couple of minutes.
 
 ## Demo
 

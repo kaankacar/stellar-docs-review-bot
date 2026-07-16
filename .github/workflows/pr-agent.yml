@@ -31,6 +31,8 @@ jobs:
       pull-requests: write    # comment + label only
       issues: read
       id-token: write
+    env:
+      APP_ID: ${{ secrets.APP_ID }}   # secrets aren't allowed in `if:` — mirror into env for the guard below
     steps:
       - uses: actions/checkout@v5
         with:
@@ -43,10 +45,26 @@ jobs:
             "${GITHUB_WORKSPACE}/.stellar-dev-skill" \
             || echo "skill fetch failed — reviewer proceeds with policy reference facts only"
 
+      # OPTIONAL unified bot identity: when the stellar-docs-bot GitHub App is configured
+      # (APP_ID + APP_PRIVATE_KEY secrets — see SETUP.md), mint an installation token so the
+      # review posts as the app instead of github-actions[bot]. Scoped DOWN to exactly this
+      # job's GITHUB_TOKEN permissions: the reviewer half must never hold merge power.
+      # If APP_ID is unset the step is skipped and everything falls back to GITHUB_TOKEN.
+      - name: Mint bot app token (optional)
+        id: bot-token
+        if: env.APP_ID != ''
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          permission-contents: read
+          permission-pull-requests: write
+          permission-issues: read
+
       - uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          github_token: ${{ secrets.GITHUB_TOKEN }}
+          github_token: ${{ steps.bot-token.outputs.token || secrets.GITHUB_TOKEN }}
           prompt: |
             You are the production docs-review agent for ${{ github.repository }}. Read
             .github/triage-policy.md FIRST and apply its PR-review section in full — run all
@@ -110,11 +128,25 @@ jobs:
       contents: write         # merge
       pull-requests: write    # merge / close / comment
     env:
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      APP_ID: ${{ secrets.APP_ID }}   # secrets aren't allowed in `if:` — mirror into env for the guard below
       REPO: ${{ github.repository }}
       PR: ${{ github.event.pull_request.number }}
     steps:
+      # OPTIONAL unified bot identity (see SETUP.md): merge/close/comment as the app.
+      # Skipped when APP_ID is unset — the step below then falls back to GITHUB_TOKEN.
+      - name: Mint bot app token (optional)
+        id: bot-token
+        if: env.APP_ID != ''
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
       - name: Act on the reviewer's label
+        env:
+          GH_TOKEN: ${{ steps.bot-token.outputs.token || secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           labels=$(gh pr view "$PR" -R "$REPO" --json labels -q '[.labels[].name] | join(",")')
