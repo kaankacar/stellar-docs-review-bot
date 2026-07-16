@@ -116,7 +116,7 @@ jobs:
                • none — anything needing changes or human review. Do not guess a label.
             If you already reviewed this exact head SHA, do nothing.
           claude_args: |
-            --model claude-sonnet-5
+            --model claude-fable-5
             --allowedTools "Read,Grep,Glob,Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr list:*),Bash(gh pr checks:*),Bash(gh pr comment:*),Bash(gh pr edit:*),Bash(gh issue view:*),Bash(gh issue list:*),Bash(gh search:*),Bash(gh api:*)"
 
   # ── Job 2: EXECUTE (no model; acts on label + green checks only) ─────────────────────
