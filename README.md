@@ -1,0 +1,81 @@
+# stellar-docs review bot
+
+An AI agent that reviews pull requests (and triages issues) for a docs repo, running entirely
+in GitHub Actions and acting under a bot identity. Built for `stellar/stellar-docs`; the
+workflows are repo-agnostic (they read `${{ github.repository }}`), so they drop into any repo.
+
+This is the exact code demoed on a fork of the docs — see [the three demo PRs](#demo) below.
+
+## How it works — one workflow, two jobs (the safety boundary)
+
+`pr-agent.yml` is a **single workflow** that both reviews and acts, split into two jobs on
+purpose:
+
+- **`review`** — runs the model (Claude), reads the pull request, posts one signed comment,
+  and *proposes* an action by applying at most one label. Its job token is `contents: read`
+  and it is given **no merge/close tools**. This is the half that ingests untrusted PR text.
+- **`execute`** — runs **no model**, never reads the PR prose, and acts (merge / close) purely
+  from the label the reviewer applied plus the objective check status. Its token has
+  `contents: write`.
+
+Because the half that can act never reads attacker-controllable content, a malicious PR
+cannot talk its way into being merged. (This mirrors GitHub Agentic Workflows' "safe outputs"
+model, rebuilt in plain Actions.)
+
+## What the reviewer decides
+
+Every PR gets a three-pass review — **mechanics** (links/anchors, MDX validity, sidebar
+collisions), **technical accuracy** (Stellar-specific: protocol/version/date correctness,
+exact network passphrases, RPC-over-Horizon guidance, SDK/CLI validity, SEP/CAP numbers), and
+**completeness** (does the diff fully do what it claims / resolve its issue) — then one of:
+
+| Outcome | Label applied | What the executor does |
+|---|---|---|
+| Trivial + correct + all-checks-green | `auto-merge-candidate` | merges (squash) once every check is green |
+| Exact duplicate / fully superseded | `triage:approve-close` | closes with a reasoned comment |
+| Judgment-call close | `triage:close-candidate` | nothing — a human confirms with `triage:approve-close` |
+| Needs changes / needs human review | none | nothing — left for a maintainer |
+
+Merge/close authority is deliberately conservative and is a policy dial, not a property of the
+tooling — start in propose-only mode, widen as trust builds.
+
+## Always-current knowledge
+
+The reviewer `git clone --depth 1`s [stellar-dev-skill](https://github.com/stellar/stellar-dev-skill)
+**fresh on every run** and consults the matching `SKILL.md` (standards, data, smart-contracts,
+assets, dapp, agentic-payments, zk-proofs). So its Stellar knowledge tracks the source of
+truth instead of going stale in a prompt. (Note: the hosted Raven MCP is browser-OAuth only
+and is **not** used in CI; the reference facts in `triage-policy.md` were compiled from it and
+baked in.)
+
+## The rulebook
+
+All behavior lives in [`.github/triage-policy.md`](.github/triage-policy.md) — the single
+source of truth both agents read at runtime. Change policy via PR; no code change needed.
+
+## Issues
+
+`issue-triage.yml` is the issue-side reviewer: on a new issue it dedupes (open + closed
+issues, and open PRs that may resolve it), verifies the claim against the checkout, labels and
+prioritizes, and *proposes* a close via label (the executor closes on `triage:approve-close`).
+Same safety split as the PR side.
+
+## Install
+
+1. Copy `.github/workflows/*.yml` and `.github/triage-policy.md` into your repo.
+2. Create the labels the policy uses: `P1`, `P2`, `auto-merge-candidate`, `triage:approve-close`,
+   `triage:close-candidate`, `triage:needs-info`.
+3. Add auth as a repo secret — either `CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`) or
+   swap the workflows to an org `ANTHROPIC_API_KEY`.
+4. Open a PR and watch it review within a couple of minutes.
+
+## Demo
+
+Run on a fork of the docs, all actions taken under the `github-actions[bot]` identity:
+
+- **Auto-merged** a clean trivial fix (reviewed → labeled → waited for green CI → merged).
+- **Caught & blocked** a subtle error — a PR "updating" the Testnet network passphrase to a
+  new year; the bot knew the passphrase is a fixed constant and flagged the inconsistency, so
+  it withheld merge (NEEDS-CHANGES).
+- **Deferred to a human** on an unverifiable "X is now live" ecosystem claim — neither merged
+  nor blocked, just asked for a maintainer's eye.
