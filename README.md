@@ -1,8 +1,11 @@
 # stellar-docs review bot
 
-An AI agent that reviews pull requests (and triages issues) for a docs repo, running entirely
-in GitHub Actions and acting under a bot identity. Built for `stellar/stellar-docs`; the
-workflows are repo-agnostic (they read `${{ github.repository }}`), so they drop into any repo.
+An AI agent that reviews pull requests for a docs repo, running entirely in GitHub Actions and
+acting under a bot identity. Built for `stellar/stellar-docs`; the workflow is repo-agnostic
+(it reads `${{ github.repository }}`), so it drops into any repo.
+
+> Issue triage + auto-fix (assign easy issues to Copilot) lives in a companion repo:
+> [stellar-docs-issue-agent](https://github.com/kaankacar/stellar-docs-issue-agent).
 
 This is the exact code demoed on a fork of the docs — see [the three demo PRs](#demo) below.
 
@@ -52,13 +55,6 @@ baked in.)
 
 All behavior lives in [`.github/triage-policy.md`](.github/triage-policy.md) — the single
 source of truth both agents read at runtime. Change policy via PR; no code change needed.
-
-## Issues
-
-`issue-triage.yml` is the issue-side reviewer: on a new issue it dedupes (open + closed
-issues, and open PRs that may resolve it), verifies the claim against the checkout, labels and
-prioritizes, and *proposes* a close via label (the executor closes on `triage:approve-close`).
-Same safety split as the PR side.
 
 ## Install
 
