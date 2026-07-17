@@ -41,8 +41,8 @@ checks green for merge; ironclad cases only for close) and can be turned up as t
      `anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}` in the three `claude-code-action`
      steps.
    - `RAVEN_MCP_TOKEN` — bearer for the Stellar Raven MCP (live fact-checking).
-3. Create the labels the policy uses: `P1`, `P2`, `auto-merge-candidate`,
-   `triage:approve-close`, `triage:close-candidate`, `triage:needs-info`, `pr:autofix`.
+3. Create the labels the policy uses: `P1`, `P2`, `auto-merge-candidate`, `pr:autofix`,
+   `triage:approve-close`, `triage:close-candidate`, `triage:needs-info`, `triage:digest`.
 4. Merge/close autonomy additionally needs the workflow token to be allowed to merge on the
    protected branch — a repo/org permission an admin controls.
 
