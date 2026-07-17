@@ -2,12 +2,13 @@
 
 An AI pull-request reviewer that runs entirely in **GitHub Actions**. On every PR it reviews
 the diff against the repo, verifies Stellar ecosystem facts against **live sources** (the
-Stellar Raven MCP + official docs), and posts one signed review with a clear recommendation —
-plus, when enabled, applies labels, auto-merges trivial+correct changes, and can push small
-fixes itself. Runs under the `github-actions[bot]` identity. Repo-agnostic (reads
-`${{ github.repository }}`), so it drops into any repo.
+Stellar Raven MCP + official docs), and posts one signed review with a clear recommendation.
+It also **acts**: it labels the PR, **auto-merges** trivial+correct changes once every check
+is green, **closes** PRs in ironclad cases, and **pushes small fixes itself**. Runs under the
+`github-actions[bot]` identity. Repo-agnostic (reads `${{ github.repository }}`), so it drops
+into any repo.
 
-## How it works — one workflow, two jobs (the safety boundary)
+## How it works — one workflow, a review→execute safety split
 - **`review`** (model: `claude-fable-5`) reads the PR, runs a three-pass review (mechanics →
   technical accuracy → completeness), and *proposes* an action via at most one label. It has
   **no merge/close power**. This is the half that ingests untrusted PR content.
@@ -27,10 +28,15 @@ repo (protocol activation dates/status, release versions, deprecations), it chec
 3. it also clones the current `stellar-dev-skill` per run for topic best-practices.
 All external and PR content is treated as untrusted data.
 
-## Behavior is a dial (safe by default)
-Everything defaults to **comment + label only** (a “consultant” — no merge/close) so results
-can be judged before any autonomy is enabled. Merge/close are gated (trivial + correct + all
-checks green for merge; ironclad cases only for close) and can be turned up as trust builds.
+## Autonomy — on by default, gated, and dialable
+Out of the box the bot **acts**, not just comments: it merges (only trivial + correct + no
+changes-requested + every check green), closes (only ironclad cases), and self-fixes (small,
+unambiguous changes, each re-reviewed before any merge). The autonomy is bounded three ways:
+the LLM never merges/closes (only the deterministic `execute` job does, from label + check
+status); the thresholds above; and the policy file itself. If you'd rather watch before
+trusting it, set [`.github/triage-policy.md`](.github/triage-policy.md) to label-only — the
+reviewer still labels and comments, humans still merge — and turn autonomy up later. No code
+change, just policy.
 
 ## Deploying it — what an admin needs to set
 1. Copy `.github/workflows/pr-agent.yml` and `.github/triage-policy.md` into the target repo.
@@ -43,8 +49,14 @@ checks green for merge; ironclad cases only for close) and can be turned up as t
    - `RAVEN_MCP_TOKEN` — bearer for the Stellar Raven MCP (live fact-checking).
 3. Create the labels the policy uses: `P1`, `P2`, `auto-merge-candidate`, `pr:autofix`,
    `triage:approve-close`, `triage:close-candidate`, `triage:needs-info`, `triage:digest`.
-4. Merge/close autonomy additionally needs the workflow token to be allowed to merge on the
-   protected branch — a repo/org permission an admin controls.
+4. **Permissions for the acting jobs** (repo/org settings an admin controls):
+   - Allow GitHub Actions **write** access, and permit `github-actions[bot]` to **merge on the
+     protected default branch** (add it to the bypass list, keeping required status checks
+     enforced) — needed by the `execute` job to merge/close.
+   - Allow Actions to **push** to same-repo PR branches — needed by the `fix` job to commit
+     self-fixes. (Fork PRs never get pushed; the bot posts one-click suggestions instead.)
+   - If you prefer to phase it in, skip this step and run label-only first (see *Autonomy*
+     above); the reviewer still works, and you grant these when ready to turn autonomy on.
 
 ## Proof it works (live demos on a fork)
 - **Raven catch:** a PR asserting a non-existent “Protocol 28 (live on Mainnet)” →
