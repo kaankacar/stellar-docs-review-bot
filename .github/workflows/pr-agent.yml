@@ -10,8 +10,9 @@ name: PR agent
 #                      cannot act, and the half that acts cannot be reasoned with.
 #   • job `fix`      — SAME-REPO PRs the reviewer labeled `pr:autofix` (small, unambiguous,
 #                      low-risk fixes only): applies exactly the fixes the review listed and
-#                      pushes ONE bot commit to the PR branch. The push re-triggers `review`
-#                      (synchronize), so nothing merges without a fresh review of the result.
+#                      pushes ONE bot commit to the PR branch. GITHUB_TOKEN pushes don't
+#                      re-trigger workflows, so a maintainer re-runs the review on the fixed
+#                      result — nothing merges without a fresh clean review either way.
 #   • job `fix-fork` — FORK PRs labeled `pr:autofix`: the bot never pushes to a fork, so it
 #                      posts the same fixes as one-click suggested changes instead. This path
 #                      deliberately holds NO contents:write token anywhere.
@@ -39,8 +40,6 @@ jobs:
       pull-requests: write    # comment + label only
       issues: read
       id-token: write
-    env:
-      APP_ID: ${{ secrets.APP_ID }}   # secrets aren't allowed in `if:` — mirror into env for the guard below
     steps:
       - uses: actions/checkout@v5
         with:
@@ -53,26 +52,10 @@ jobs:
             "${GITHUB_WORKSPACE}/.stellar-dev-skill" \
             || echo "skill fetch failed — reviewer proceeds with policy reference facts only"
 
-      # OPTIONAL unified bot identity: when the stellar-docs-bot GitHub App is configured
-      # (APP_ID + APP_PRIVATE_KEY secrets — see SETUP.md), mint an installation token so the
-      # review posts as the app instead of github-actions[bot]. Scoped DOWN to exactly this
-      # job's GITHUB_TOKEN permissions: the reviewer half must never hold merge power.
-      # If APP_ID is unset the step is skipped and everything falls back to GITHUB_TOKEN.
-      - name: Mint bot app token (optional)
-        id: bot-token
-        if: env.APP_ID != ''
-        uses: actions/create-github-app-token@v3
-        with:
-          app-id: ${{ secrets.APP_ID }}
-          private-key: ${{ secrets.APP_PRIVATE_KEY }}
-          permission-contents: read
-          permission-pull-requests: write
-          permission-issues: read
-
       - uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          github_token: ${{ steps.bot-token.outputs.token || secrets.GITHUB_TOKEN }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
           allowed_bots: "stellar-docs-bot,copilot-swe-agent"   # review PRs opened by our own bot + Copilot
           prompt: |
             You are the production docs-review agent for ${{ github.repository }}. Read
@@ -169,25 +152,12 @@ jobs:
       contents: write         # merge
       pull-requests: write    # merge / close / comment
     env:
-      APP_ID: ${{ secrets.APP_ID }}   # secrets aren't allowed in `if:` — mirror into env for the guard below
       REPO: ${{ github.repository }}
       PR: ${{ github.event.pull_request.number }}
     steps:
-      # OPTIONAL unified bot identity (see SETUP.md): merge/close/comment as the app.
-      # Skipped when APP_ID is unset — the step below then falls back to GITHUB_TOKEN.
-      - name: Mint bot app token (optional)
-        id: bot-token
-        if: env.APP_ID != ''
-        uses: actions/create-github-app-token@v3
-        with:
-          app-id: ${{ secrets.APP_ID }}
-          private-key: ${{ secrets.APP_PRIVATE_KEY }}
-          permission-contents: write
-          permission-pull-requests: write
-
       - name: Act on the reviewer's label
         env:
-          GH_TOKEN: ${{ steps.bot-token.outputs.token || secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           labels=$(gh pr view "$PR" -R "$REPO" --json labels -q '[.labels[].name] | join(",")')
@@ -235,8 +205,11 @@ jobs:
 
   # ── Job 3: FIX — same-repo PRs only (model applies the reviewer's listed small fixes) ──
   # Runs only when the reviewer applied `pr:autofix`. Pushes ONE bot commit to the PR head
-  # branch; that push re-triggers `review` (synchronize), so the fixed result still gets a
-  # fresh review before any merge. Never merges/closes anything itself.
+  # branch. NOTE: pushes made with GITHUB_TOKEN do not re-trigger this workflow (GitHub
+  # suppresses them), so a maintainer re-runs the PR agent on the fixed result — or the next
+  # author push triggers it. Nothing can merge in the meantime: `pr:autofix` is never paired
+  # with an action label, and the executor acts only on reviewer labels + green checks.
+  # Never merges/closes anything itself.
   fix:
     needs: review
     if: >
@@ -245,32 +218,17 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
-      contents: write         # push the fix commit (fallback path; the app token also carries this)
+      contents: write         # push the fix commit
       pull-requests: write    # comment + clear the pr:autofix label
       id-token: write
     env:
-      APP_ID: ${{ secrets.APP_ID }}   # secrets aren't allowed in `if:` — mirror into env for the guard below
       REPO: ${{ github.repository }}
       PR: ${{ github.event.pull_request.number }}
     steps:
-      # Same optional app identity as the other jobs (see SETUP.md). NOTE: pushes made with
-      # the app token re-trigger this workflow (re-review of the fix); pushes made with the
-      # GITHUB_TOKEN fallback do NOT (GitHub suppresses them) — the fix then sits until the
-      # next human push or a manual re-run.
-      - name: Mint bot app token (optional)
-        id: bot-token
-        if: env.APP_ID != ''
-        uses: actions/create-github-app-token@v3
-        with:
-          app-id: ${{ secrets.APP_ID }}
-          private-key: ${{ secrets.APP_PRIVATE_KEY }}
-          permission-contents: write
-          permission-pull-requests: write
-
       - name: Gate — pr:autofix present, and last commit not ours (loop guard)
         id: gate
         env:
-          GH_TOKEN: ${{ steps.bot-token.outputs.token || secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           labels=$(gh pr view "$PR" -R "$REPO" --json labels -q '[.labels[].name] | join(",")')
@@ -298,7 +256,7 @@ jobs:
         if: steps.gate.outputs.run == 'true'
         with:
           ref: ${{ github.event.pull_request.head.ref }}   # the PR branch — same-repo only, and nothing from it is ever executed
-          token: ${{ steps.bot-token.outputs.token || secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.GITHUB_TOKEN }}
           fetch-depth: 1
 
       - name: Apply the reviewer's fixes and push
@@ -306,7 +264,7 @@ jobs:
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          github_token: ${{ steps.bot-token.outputs.token || secrets.GITHUB_TOKEN }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
           allowed_bots: "stellar-docs-bot,copilot-swe-agent"   # our own bot's PRs are fixable too
           prompt: |
             PR #${{ github.event.pull_request.number }} in ${{ github.repository }} was
@@ -339,7 +297,9 @@ jobs:
             5. Post exactly ONE comment. FIRST line EXACTLY:
                🤖 **Claude docs self-fix**
                then one bullet per applied fix (`path:line` — what changed), one bullet per
-               skipped item (why), and a closing note that the push triggers a fresh review.
+               skipped item (why), and a closing note that a maintainer should re-run the
+               PR agent workflow (or wait for the next push) so the fixed result gets a
+               fresh review.
             If nothing on the list is verifiably applicable, push nothing and post the
             comment explaining that instead.
           claude_args: |
@@ -349,7 +309,7 @@ jobs:
       - name: Clear the pr:autofix label (proposal handled)
         if: steps.gate.outputs.run == 'true'
         env:
-          GH_TOKEN: ${{ steps.bot-token.outputs.token || secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh pr edit "$PR" -R "$REPO" --remove-label "pr:autofix" || true
 
   # ── Job 3b: FIX-FORK — fork PRs (bot can't push to the fork; post one-click suggestions) ──
@@ -368,24 +328,13 @@ jobs:
       pull-requests: write    # post the suggestions review/comment + clear the label
       id-token: write
     env:
-      APP_ID: ${{ secrets.APP_ID }}   # secrets aren't allowed in `if:` — mirror into env for the guard below
       REPO: ${{ github.repository }}
       PR: ${{ github.event.pull_request.number }}
     steps:
-      - name: Mint bot app token (optional)
-        id: bot-token
-        if: env.APP_ID != ''
-        uses: actions/create-github-app-token@v3
-        with:
-          app-id: ${{ secrets.APP_ID }}
-          private-key: ${{ secrets.APP_PRIVATE_KEY }}
-          permission-contents: read
-          permission-pull-requests: write
-
       - name: Gate — pr:autofix present
         id: gate
         env:
-          GH_TOKEN: ${{ steps.bot-token.outputs.token || secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           labels=$(gh pr view "$PR" -R "$REPO" --json labels -q '[.labels[].name] | join(",")')
@@ -407,7 +356,7 @@ jobs:
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          github_token: ${{ steps.bot-token.outputs.token || secrets.GITHUB_TOKEN }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
           allowed_bots: "stellar-docs-bot,copilot-swe-agent"
           prompt: |
             PR #${{ github.event.pull_request.number }} in ${{ github.repository }} comes
@@ -452,5 +401,5 @@ jobs:
       - name: Clear the pr:autofix label (proposal handled)
         if: steps.gate.outputs.run == 'true'
         env:
-          GH_TOKEN: ${{ steps.bot-token.outputs.token || secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh pr edit "$PR" -R "$REPO" --remove-label "pr:autofix" || true
